@@ -130,8 +130,6 @@ body::before {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  /* mirror so it feels like a mirror */
-  transform: scaleX(-1);
   opacity: 0;
   pointer-events: none;
 }
@@ -142,8 +140,6 @@ body::before {
   width: 100%;
   height: 100%;
   display: block;
-  /* mirror the canvas too so overlays match */
-  transform: scaleX(-1);
   background: #000;
 }
 
@@ -171,55 +167,6 @@ body::before {
   text-transform: uppercase;
   backdrop-filter: blur(10px);
 }
-
-.dock {
-  pointer-events: auto;
-  display: flex;
-  gap: 8px;
-  padding: 8px;
-  background: rgba(10, 12, 16, 0.55);
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  backdrop-filter: blur(14px);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
-}
-
-.chip {
-  appearance: none;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--fg-dim);
-  font-family: inherit;
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  padding: 10px 14px;
-  border-radius: 999px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  transition:
-    color 160ms ease,
-    background-color 160ms ease,
-    border-color 160ms ease,
-    transform 160ms ease;
-}
-.chip:hover {
-  color: var(--fg);
-  background: rgba(255, 255, 255, 0.04);
-}
-.chip__num {
-  font-size: 10px;
-  opacity: 0.6;
-}
-.chip.is-active {
-  color: #06120e;
-  background: var(--accent);
-  border-color: var(--accent);
-  box-shadow: 0 6px 24px rgba(126, 240, 197, 0.25);
-}
-.chip.is-active .chip__num { opacity: 0.8; }
 
 .boot {
   position: absolute;
@@ -269,7 +216,4 @@ body::before {
   .title { display: none; }
   .titlebar { grid-template-columns: auto 1fr; }
   .meta { font-size: 10px; gap: 10px; }
-  .chip__label { display: none; }
-  .chip { padding: 10px 12px; }
-  .chip__num { font-size: 12px; opacity: 0.9; }
 }
