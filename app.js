@@ -15,6 +15,7 @@
 
 import { loadDetector, detect } from "./analysis/objectDetector.js";
 import { createTracker } from "./analysis/objectTracker.js";
+import { computeObjectGeometry, isReady as isCvReady } from "./analysis/objectLocalCv.js";
 import { drawNeutralPreview } from "./render/neutralPreview.js";
 
 const video = document.getElementById("video");
@@ -37,6 +38,7 @@ const state = {
   detector: null,
   tracker: createTracker(),
   objects: [],
+  geometries: new Map(),
   fpsAcc: { last: performance.now(), frames: 0 },
 };
 
@@ -84,7 +86,17 @@ function sizeCanvases() {
 }
 
 function captureFrame() {
-  captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+  // Mirror at capture so the canvas feels like a selfie mirror. All downstream
+  // analysis (detection, tracking, object-local CV) and rendering then operate
+  // in this same mirrored "display space" — so bbox coords, edge ImageData,
+  // and Hough line endpoints all line up with what the user sees, and label
+  // text drawn at those coords still reads forward.
+  const w = captureCanvas.width;
+  const h = captureCanvas.height;
+  captureCtx.save();
+  captureCtx.setTransform(-1, 0, 0, 1, w, 0);
+  captureCtx.drawImage(video, 0, 0, w, h);
+  captureCtx.restore();
 }
 
 function updateCountBadge(objects) {
@@ -114,7 +126,12 @@ async function loop() {
         canvasHeight: captureCanvas.height,
         now,
       });
-      drawNeutralPreview(outputCtx, captureCanvas, state.objects);
+      // Object-local CV runs only over tracked bbox crops — never the full
+      // frame. No-ops gracefully until OpenCV.js has finished loading.
+      state.geometries = isCvReady()
+        ? computeObjectGeometry(captureCanvas, state.objects)
+        : new Map();
+      drawNeutralPreview(outputCtx, captureCanvas, state.objects, state.geometries);
       updateCountBadge(state.objects);
     } catch (err) {
       console.error("[loop] error:", err);
