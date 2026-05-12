@@ -19,6 +19,14 @@
           <div class="meta">
             <span id="fps" class="meta__fps">— fps</span>
             <span id="status" class="meta__status">booting</span>
+            <button
+              id="inspectorToggle"
+              class="meta__btn"
+              type="button"
+              aria-expanded="false"
+              aria-controls="inspector"
+              title="Toggle plan inspector (i)"
+            >JSON</button>
           </div>
         </header>
 
@@ -33,6 +41,19 @@
 
           <div class="overlay overlay--bottom">
             <div class="controls">
+              <form class="prompt" id="promptForm" autocomplete="off">
+                <input
+                  type="text"
+                  id="promptInput"
+                  class="prompt__input"
+                  placeholder="direct the scene — e.g. make the person sacred and the laptop poisonous"
+                  maxlength="500"
+                  spellcheck="false"
+                  aria-label="Scene prompt"
+                />
+                <button type="submit" class="prompt__submit" id="promptSubmit">Apply</button>
+                <span class="prompt__status" id="promptStatus" role="status" aria-live="polite"></span>
+              </form>
               <div class="presets" role="tablist" aria-label="Action plan presets" id="presetRow"></div>
               <label class="intensity">
                 <span class="intensity__label">Intensity</span>
@@ -50,6 +71,16 @@
               </label>
             </div>
           </div>
+
+          <aside id="inspector" class="inspector" aria-hidden="true" aria-label="Plan inspector">
+            <header class="inspector__header">
+              <span class="inspector__title">ActionPlan</span>
+              <span class="inspector__source" id="inspectorSource">preset</span>
+              <button id="inspectorClose" class="inspector__close" type="button" aria-label="Close inspector">×</button>
+            </header>
+            <div class="inspector__meta" id="inspectorMeta">—</div>
+            <pre class="inspector__json" id="inspectorJson">{}</pre>
+          </aside>
 
           <div id="boot" class="boot">
             <div class="boot__inner">
