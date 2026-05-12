@@ -13,19 +13,31 @@
  * DetectedObject list and (optionally) the same geometry map.
  */
 
-// Pooled offscreen canvas for blitting edge ImageData with globalAlpha.
+// Pooled offscreen canvas for tinting+blitting the white edge mask.
 const _edgeBlitCanvas = document.createElement("canvas");
 const _edgeBlitCtx = _edgeBlitCanvas.getContext("2d");
+const PREVIEW_EDGE_TINT = "rgb(126, 240, 197)";
+const PREVIEW_EDGE_ALPHA = 0.42;
 
 function drawEdges(ctx, geom) {
   const img = geom.localEdges;
   if (!img) return;
   if (_edgeBlitCanvas.width !== img.width) _edgeBlitCanvas.width = img.width;
   if (_edgeBlitCanvas.height !== img.height) _edgeBlitCanvas.height = img.height;
+  _edgeBlitCtx.save();
+  _edgeBlitCtx.globalCompositeOperation = "source-over";
   _edgeBlitCtx.clearRect(0, 0, img.width, img.height);
   _edgeBlitCtx.putImageData(img, 0, 0);
+  _edgeBlitCtx.globalCompositeOperation = "source-in";
+  _edgeBlitCtx.fillStyle = PREVIEW_EDGE_TINT;
+  _edgeBlitCtx.fillRect(0, 0, img.width, img.height);
+  _edgeBlitCtx.restore();
+
   const [ox, oy] = geom.localEdgesOrigin;
+  ctx.save();
+  ctx.globalAlpha = PREVIEW_EDGE_ALPHA;
   ctx.drawImage(_edgeBlitCanvas, ox, oy);
+  ctx.restore();
 }
 
 function drawLines(ctx, geom, w) {

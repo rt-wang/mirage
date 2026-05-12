@@ -1,22 +1,30 @@
 /*
- * Latent Canvas — Phase 1.
+ * Latent Canvas — Phase 3.
  *
  * Pipeline:
  *   getUserMedia → hidden <video>
- *     → captureCanvas (per-frame source pixels)
+ *     → captureCanvas (mirrored at capture, so all downstream coords are
+ *       already in display space)
  *       → COCO-SSD → raw detections
  *         → tracker → DetectedObject[] (stable ids, smoothed bboxes)
- *           → neutral preview renderer → outputCanvas
+ *           → object-local CV → Map<id, ObjectGeometry>
+ *             → renderer:
+ *                 - neutral preset → drawNeutralPreview
+ *                 - styled preset → drawStyledPlan(plan, intensity)
  *
- * Object detection is the only analysis root. There is no mode switching;
- * future phases will layer object-local CV and the styled renderer on top of
- * this same DetectedObject stream.
+ * Intensity is exponentially smoothed toward its target every frame so slider
+ * drags and preset switches feel continuous instead of stepping. A preset
+ * change also briefly ducks the current intensity to zero then back to the
+ * slider value, which keeps action transitions from popping.
  */
 
 import { loadDetector, detect } from "./analysis/objectDetector.js";
 import { createTracker } from "./analysis/objectTracker.js";
 import { computeObjectGeometry, isReady as isCvReady } from "./analysis/objectLocalCv.js";
 import { drawNeutralPreview } from "./render/neutralPreview.js";
+import { drawStyledPlan } from "./render/actionRenderer.js";
+import { resetTrail } from "./render/actions/trail.js";
+import { PRESETS, findPreset } from "./llm/defaultPlans.js";
 
 const video = document.getElementById("video");
 const outputCanvas = document.getElementById("output");
@@ -29,6 +37,10 @@ const ui = {
   fps: document.getElementById("fps"),
   status: document.getElementById("status"),
   countBadge: document.getElementById("countBadge"),
+  planTitle: document.getElementById("planTitle"),
+  presetRow: document.getElementById("presetRow"),
+  intensitySlider: document.getElementById("intensitySlider"),
+  intensityValue: document.getElementById("intensityValue"),
   boot: document.getElementById("boot"),
   bootStep: document.getElementById("bootStep"),
   bootBar: document.getElementById("bootBar"),
@@ -39,8 +51,19 @@ const state = {
   tracker: createTracker(),
   objects: [],
   geometries: new Map(),
+  presetId: "neutral",
+  // Master intensity: targetIntensity is what the slider asks for; current
+  // chases it via EMA so changes don't snap.
+  targetIntensity: 0.8,
+  currentIntensity: 0.8,
+  // When a preset changes we duck briefly: clamp current intensity to 0 then
+  // let it ramp back up to target. presetSwitchAt is the timestamp of the duck.
+  presetSwitchAt: 0,
   fpsAcc: { last: performance.now(), frames: 0 },
 };
+
+const INTENSITY_SMOOTHING = 0.12; // 0..1 per frame
+const PRESET_DUCK_MS = 220;
 
 function setStatus(text, ready = false) {
   ui.status.textContent = text;
@@ -86,11 +109,6 @@ function sizeCanvases() {
 }
 
 function captureFrame() {
-  // Mirror at capture so the canvas feels like a selfie mirror. All downstream
-  // analysis (detection, tracking, object-local CV) and rendering then operate
-  // in this same mirrored "display space" — so bbox coords, edge ImageData,
-  // and Hough line endpoints all line up with what the user sees, and label
-  // text drawn at those coords still reads forward.
   const w = captureCanvas.width;
   const h = captureCanvas.height;
   captureCtx.save();
@@ -115,34 +133,116 @@ function tickFps(now) {
   }
 }
 
+function effectiveTargetIntensity(now) {
+  // During the duck window after a preset switch we pull target to 0 so the
+  // EMA falls; once the window expires it rises back to the slider value.
+  const dt = now - state.presetSwitchAt;
+  if (dt < PRESET_DUCK_MS) {
+    return 0;
+  }
+  return state.targetIntensity;
+}
+
+function updateIntensitySliderFill(value) {
+  ui.intensitySlider.style.setProperty("--fill", `${value * 100}%`);
+  ui.intensityValue.textContent = String(Math.round(value * 100));
+}
+
+function selectPreset(id) {
+  const preset = findPreset(id);
+  if (preset.id === state.presetId) return;
+  state.presetId = preset.id;
+  state.presetSwitchAt = performance.now();
+  ui.planTitle.textContent = preset.plan ? preset.plan.title : preset.title;
+  // Reset any persistent layers (the trail canvas) so the new preset starts
+  // clean instead of inheriting smear from the previous one.
+  resetTrail();
+  for (const btn of ui.presetRow.children) {
+    const active = btn.dataset.preset === id;
+    btn.classList.toggle("is-active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  }
+}
+
+function buildPresetUi() {
+  for (const p of PRESETS) {
+    const btn = document.createElement("button");
+    btn.className = "preset" + (p.id === state.presetId ? " is-active" : "");
+    btn.type = "button";
+    btn.dataset.preset = p.id;
+    btn.textContent = p.title;
+    btn.setAttribute("role", "tab");
+    btn.setAttribute("aria-selected", p.id === state.presetId ? "true" : "false");
+    btn.addEventListener("click", () => selectPreset(p.id));
+    ui.presetRow.appendChild(btn);
+  }
+}
+
+function wireUi() {
+  buildPresetUi();
+  const onSlider = () => {
+    const v = Number(ui.intensitySlider.value) / 100;
+    state.targetIntensity = v;
+    updateIntensitySliderFill(v);
+  };
+  ui.intensitySlider.addEventListener("input", onSlider);
+  onSlider();
+
+  // Keyboard shortcuts: 1..N picks presets in order.
+  window.addEventListener("keydown", (e) => {
+    const n = Number(e.key);
+    if (Number.isInteger(n) && n >= 1 && n <= PRESETS.length) {
+      selectPreset(PRESETS[n - 1].id);
+    }
+  });
+}
+
 async function loop() {
+  const now = performance.now();
   if (video.readyState >= 2 && state.detector) {
     captureFrame();
     try {
       const raw = await detect(state.detector, captureCanvas);
-      const now = performance.now();
       state.objects = state.tracker.update(raw, {
         canvasWidth: captureCanvas.width,
         canvasHeight: captureCanvas.height,
         now,
       });
-      // Object-local CV runs only over tracked bbox crops — never the full
-      // frame. No-ops gracefully until OpenCV.js has finished loading.
       state.geometries = isCvReady()
         ? computeObjectGeometry(captureCanvas, state.objects)
         : new Map();
-      drawNeutralPreview(outputCtx, captureCanvas, state.objects, state.geometries);
+
+      // EMA the master intensity toward its effective target (duck-aware).
+      const target = effectiveTargetIntensity(now);
+      state.currentIntensity += (target - state.currentIntensity) * INTENSITY_SMOOTHING;
+      if (state.currentIntensity < 0.001) state.currentIntensity = 0;
+
+      const preset = findPreset(state.presetId);
+      if (preset.plan && state.currentIntensity > 0.01) {
+        drawStyledPlan(
+          outputCtx,
+          captureCanvas,
+          state.objects,
+          state.geometries,
+          preset.plan,
+          { intensity: state.currentIntensity, timeMs: now },
+        );
+      } else {
+        drawNeutralPreview(outputCtx, captureCanvas, state.objects, state.geometries);
+      }
+
       updateCountBadge(state.objects);
     } catch (err) {
       console.error("[loop] error:", err);
     }
   }
-  tickFps(performance.now());
+  tickFps(now);
   requestAnimationFrame(loop);
 }
 
 async function main() {
   try {
+    wireUi();
     await setupCamera();
     setBootStep("loading detector…", 60);
     state.detector = await loadDetector();

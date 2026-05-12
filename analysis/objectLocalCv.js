@@ -20,8 +20,6 @@
  */
 
 const MIN_CROP_PX = 12;
-const EDGE_TINT = [126, 240, 197];
-const EDGE_ALPHA_SCALE = 0.42; // edges are visually noisy — keep alpha modest
 
 let _src = null;
 let _gray = null;
@@ -55,10 +53,11 @@ function clampRect(bbox, W, H) {
   return { x, y, width: w, height: h };
 }
 
-function edgeMatToImageData(mat, [r, g, b]) {
-  // mat is CV_8UC1 (single-channel canny output, 0 or 255). Build an RGBA
-  // ImageData where alpha mirrors the edge value so the renderer composites
-  // it as a translucent overlay of the accent color.
+function edgeMatToImageData(mat) {
+  // mat is CV_8UC1 (Canny output, 0 or 255). Build an RGBA ImageData where
+  // alpha mirrors the edge value and color is white. Each renderer recolors
+  // the mask at draw time (source-in composite + fillRect), so the same
+  // geometry can power any action regardless of palette.
   const w = mat.cols;
   const h = mat.rows;
   const src = mat.data;
@@ -66,10 +65,10 @@ function edgeMatToImageData(mat, [r, g, b]) {
   for (let i = 0; i < w * h; i++) {
     const v = src[i];
     const o = i * 4;
-    out[o] = r;
-    out[o + 1] = g;
-    out[o + 2] = b;
-    out[o + 3] = v ? Math.round(v * EDGE_ALPHA_SCALE) : 0;
+    out[o] = 255;
+    out[o + 1] = 255;
+    out[o + 2] = 255;
+    out[o + 3] = v;
   }
   return new ImageData(out, w, h);
 }
@@ -138,7 +137,7 @@ export function computeObjectGeometry(captureCanvas, objects) {
         localLines.push([x1, y1, x2, y2]);
       }
 
-      const localEdges = edgeMatToImageData(_edges, EDGE_TINT);
+      const localEdges = edgeMatToImageData(_edges);
 
       result.set(obj.id, {
         objectId: obj.id,

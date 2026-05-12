@@ -28,6 +28,27 @@
 
           <div class="overlay overlay--top">
             <span class="badge" id="countBadge">0 objects</span>
+            <span class="badge badge--title" id="planTitle">Neutral</span>
+          </div>
+
+          <div class="overlay overlay--bottom">
+            <div class="controls">
+              <div class="presets" role="tablist" aria-label="Action plan presets" id="presetRow"></div>
+              <label class="intensity">
+                <span class="intensity__label">Intensity</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value="80"
+                  step="1"
+                  id="intensitySlider"
+                  class="intensity__slider"
+                  aria-label="Global intensity"
+                />
+                <span class="intensity__value" id="intensityValue">80</span>
+              </label>
+            </div>
           </div>
 
           <div id="boot" class="boot">
