@@ -458,6 +458,47 @@ body::before {
   border-bottom-right-radius: 14px;
 }
 
+.hints {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 3;
+  pointer-events: none;
+  padding: 10px 12px;
+  background: rgba(7, 8, 10, 0.72);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  backdrop-filter: blur(10px);
+}
+.hints__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+.hints__row span {
+  color: var(--fg-dim);
+}
+.hints__row kbd {
+  background: rgba(126, 240, 197, 0.1);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: bold;
+  color: var(--accent);
+  min-width: 36px;
+  text-align: center;
+  letter-spacing: 0.06em;
+}
+
 .boot {
   position: absolute;
   inset: 0;
