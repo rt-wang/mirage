@@ -19,6 +19,24 @@
           <div class="meta">
             <span id="fps" class="meta__fps">— fps</span>
             <span id="status" class="meta__status">booting</span>
+            <label class="meta__btn" id="uploadLabel" for="videoUpload" title="Upload a video file">VIDEO</label>
+            <input type="file" id="videoUpload" accept="video/*" hidden>
+            <button id="cameraBtn" class="meta__btn" type="button" title="Switch back to camera" hidden>← CAM</button>
+            <button
+              id="feedToggle"
+              class="meta__btn"
+              type="button"
+              aria-pressed="false"
+              title="Toggle camera feed (c)"
+            >CAM</button>
+            <button
+              id="inspectorToggle"
+              class="meta__btn"
+              type="button"
+              aria-expanded="false"
+              aria-controls="inspector"
+              title="Toggle plan inspector (i)"
+            >JSON</button>
           </div>
         </header>
 
@@ -33,13 +51,19 @@
 
           <div class="overlay overlay--bottom">
             <div class="controls">
-              <div class="source-row">
-                <button id="cameraBtn" class="source-btn is-active" type="button">Camera</button>
-                <label class="source-btn" id="uploadLabel" for="videoUpload">Upload Video</label>
-                <input type="file" id="videoUpload" accept="video/*" hidden>
-                <span class="source-filename" id="sourceFilename"></span>
-              </div>
-              <div class="source-divider"></div>
+              <form class="prompt" id="promptForm" autocomplete="off">
+                <input
+                  type="text"
+                  id="promptInput"
+                  class="prompt__input"
+                  placeholder="direct the scene — e.g. make the person sacred and the laptop poisonous"
+                  maxlength="500"
+                  spellcheck="false"
+                  aria-label="Scene prompt"
+                />
+                <button type="submit" class="prompt__submit" id="promptSubmit">Apply</button>
+                <span class="prompt__status" id="promptStatus" role="status" aria-live="polite"></span>
+              </form>
               <div class="presets" role="tablist" aria-label="Action plan presets" id="presetRow"></div>
               <div class="bottom-row">
                 <label class="intensity">
@@ -56,9 +80,26 @@
                   />
                   <span class="intensity__value" id="intensityValue">80</span>
                 </label>
-                <button id="feedToggle" class="feed-toggle" type="button" aria-pressed="false">Hide Feed</button>
               </div>
             </div>
+          </div>
+
+          <aside id="inspector" class="inspector" aria-hidden="true" aria-label="Plan inspector">
+            <header class="inspector__header">
+              <span class="inspector__title">ActionPlan</span>
+              <span class="inspector__source" id="inspectorSource">preset</span>
+              <button id="inspectorClose" class="inspector__close" type="button" aria-label="Close inspector">×</button>
+            </header>
+            <div class="inspector__meta" id="inspectorMeta">—</div>
+            <pre class="inspector__json" id="inspectorJson">{}</pre>
+          </aside>
+
+          <div id="hints" class="hints" aria-label="Keyboard shortcuts">
+            <div class="hints__row"><kbd>/</kbd><span>focus prompt</span></div>
+            <div class="hints__row"><kbd>1–N</kbd><span>select preset</span></div>
+            <div class="hints__row"><kbd>i</kbd><span>inspector</span></div>
+            <div class="hints__row"><kbd>c</kbd><span>toggle camera</span></div>
+            <div class="hints__row"><kbd>Esc</kbd><span>dismiss</span></div>
           </div>
 
           <div id="boot" class="boot">

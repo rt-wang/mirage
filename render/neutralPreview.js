@@ -57,13 +57,13 @@ function drawLines(ctx, geom, w) {
   ctx.restore();
 }
 
-export function drawNeutralPreview(ctx, captureCanvas, objects, geometries, { hideFeed = false } = {}) {
+export function drawNeutralPreview(ctx, captureCanvas, objects, geometries, opts = {}) {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
 
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  if (hideFeed) {
+  if (opts.hideFeed) {
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, w, h);
   } else {

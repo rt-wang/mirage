@@ -1,30 +1,34 @@
 /*
- * Latent Canvas — Phase 3.
+ * Latent Canvas — Phase 4A.
  *
  * Pipeline:
- *   getUserMedia → hidden <video>
- *     → captureCanvas (mirrored at capture, so all downstream coords are
- *       already in display space)
+ *   getUserMedia (or uploaded video file) → hidden <video>
+ *     → captureCanvas (mirrored for webcam, straight for video files)
  *       → COCO-SSD → raw detections
  *         → tracker → DetectedObject[] (stable ids, smoothed bboxes)
  *           → object-local CV → Map<id, ObjectGeometry>
+ *           → sceneSignals → summary for the planner
  *             → renderer:
- *                 - neutral preset → drawNeutralPreview
- *                 - styled preset → drawStyledPlan(plan, intensity)
+ *                 - source = "llm"     → drawStyledPlan(state.currentPlan)
+ *                 - source = "preset"  → drawStyledPlan(preset.plan)  or neutral
  *
- * Intensity is exponentially smoothed toward its target every frame so slider
- * drags and preset switches feel continuous instead of stepping. A preset
- * change also briefly ducks the current intensity to zero then back to the
- * slider value, which keeps action transitions from popping.
+ * Phase 4A adds the prompt → plan loop. The frontend POSTs context to
+ * /api/plan; planClient falls back to a local deterministic mock when the
+ * backend isn't reachable so the prompt UI is functional even on the static
+ * dev server. Bad model output cannot crash anything — validateActionPlan
+ * sanitizes before the renderer ever sees the plan, and on hard failure we
+ * keep the previous plan.
  */
 
 import { loadDetector, detect } from "./analysis/objectDetector.js";
 import { createTracker } from "./analysis/objectTracker.js";
 import { computeObjectGeometry, isReady as isCvReady } from "./analysis/objectLocalCv.js";
+import { computeSceneSignals } from "./analysis/sceneSignals.js";
 import { drawNeutralPreview } from "./render/neutralPreview.js";
 import { drawStyledPlan } from "./render/actionRenderer.js";
 import { resetTrail } from "./render/actions/trail.js";
 import { PRESETS, findPreset } from "./llm/defaultPlans.js";
+import { requestActionPlan } from "./llm/planClient.js";
 
 const video = document.getElementById("video");
 const outputCanvas = document.getElementById("output");
@@ -41,14 +45,23 @@ const ui = {
   presetRow: document.getElementById("presetRow"),
   intensitySlider: document.getElementById("intensitySlider"),
   intensityValue: document.getElementById("intensityValue"),
-  feedToggle: document.getElementById("feedToggle"),
+  promptForm: document.getElementById("promptForm"),
+  promptInput: document.getElementById("promptInput"),
+  promptSubmit: document.getElementById("promptSubmit"),
+  promptStatus: document.getElementById("promptStatus"),
   cameraBtn: document.getElementById("cameraBtn"),
   videoUpload: document.getElementById("videoUpload"),
   uploadLabel: document.getElementById("uploadLabel"),
-  sourceFilename: document.getElementById("sourceFilename"),
   boot: document.getElementById("boot"),
   bootStep: document.getElementById("bootStep"),
   bootBar: document.getElementById("bootBar"),
+  inspectorToggle: document.getElementById("inspectorToggle"),
+  inspector: document.getElementById("inspector"),
+  inspectorClose: document.getElementById("inspectorClose"),
+  inspectorSource: document.getElementById("inspectorSource"),
+  inspectorMeta: document.getElementById("inspectorMeta"),
+  inspectorJson: document.getElementById("inspectorJson"),
+  feedToggle: document.getElementById("feedToggle"),
 };
 
 const state = {
@@ -56,23 +69,35 @@ const state = {
   tracker: createTracker(),
   objects: [],
   geometries: new Map(),
+  sceneSignals: null,
+
+  // Active plan resolution.
   presetId: "neutral",
+  currentPlan: null,
+  currentPlanSource: "preset", // "preset" | "llm" | "mock"
+
+  // Prompt flow.
+  promptPending: false,
+  lastPlanError: null,
+  lastPlanWarnings: [],
+  inspectorOpen: false,
   hideFeed: false,
+
+  // Video source.
   sourceMode: "camera",
   mirrorCapture: true,
   cameraStream: null,
   videoObjectUrl: null,
-  // Master intensity: targetIntensity is what the slider asks for; current
-  // chases it via EMA so changes don't snap.
+
+  // Intensity smoothing.
   targetIntensity: 0.8,
   currentIntensity: 0.8,
-  // When a preset changes we duck briefly: clamp current intensity to 0 then
-  // let it ramp back up to target. presetSwitchAt is the timestamp of the duck.
   presetSwitchAt: 0,
+
   fpsAcc: { last: performance.now(), frames: 0 },
 };
 
-const INTENSITY_SMOOTHING = 0.12; // 0..1 per frame
+const INTENSITY_SMOOTHING = 0.12;
 const PRESET_DUCK_MS = 220;
 
 function setStatus(text, ready = false) {
@@ -89,14 +114,16 @@ function hideBoot() {
   ui.boot.classList.add("is-hidden");
 }
 
+function setPromptStatus(text, kind) {
+  ui.promptStatus.textContent = text || "";
+  ui.promptStatus.classList.remove("is-ok", "is-mock", "is-err");
+  if (kind) ui.promptStatus.classList.add(`is-${kind}`);
+}
+
 async function startCamera() {
   video.src = "";
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: {
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-      facingMode: "user",
-    },
+    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
     audio: false,
   });
   state.cameraStream = stream;
@@ -138,7 +165,7 @@ async function setupVideoFile(file) {
   });
   await video.play();
   sizeCanvases();
-  updateSourceUi(file.name);
+  updateSourceUi();
 }
 
 async function switchToCamera() {
@@ -150,23 +177,17 @@ async function switchToCamera() {
   }
   try {
     await startCamera();
-    updateSourceUi(null);
+    updateSourceUi();
   } catch (err) {
     console.error("[switchToCamera]", err);
     setStatus("camera error");
   }
 }
 
-function updateSourceUi(filename) {
+function updateSourceUi() {
   const inVideo = state.sourceMode === "video";
-  ui.cameraBtn.classList.toggle("is-active", !inVideo);
+  ui.cameraBtn.hidden = !inVideo;
   ui.uploadLabel.classList.toggle("is-active", inVideo);
-  if (filename) {
-    const short = filename.length > 30 ? filename.slice(0, 28) + "…" : filename;
-    ui.sourceFilename.textContent = short;
-  } else {
-    ui.sourceFilename.textContent = "";
-  }
 }
 
 function sizeCanvases() {
@@ -205,13 +226,36 @@ function tickFps(now) {
   }
 }
 
-function effectiveTargetIntensity(now) {
-  // During the duck window after a preset switch we pull target to 0 so the
-  // EMA falls; once the window expires it rises back to the slider value.
-  const dt = now - state.presetSwitchAt;
-  if (dt < PRESET_DUCK_MS) {
-    return 0;
+function isLlmSource(source) {
+  return source === "llm" || source === "mock";
+}
+
+function activePlan() {
+  if (isLlmSource(state.currentPlanSource) && state.currentPlan) return state.currentPlan;
+  return findPreset(state.presetId).plan;
+}
+
+function activePlanTitle() {
+  if (isLlmSource(state.currentPlanSource) && state.currentPlan) return state.currentPlan.title;
+  const p = findPreset(state.presetId);
+  return p.plan ? p.plan.title : p.title;
+}
+
+function refreshPlanTitle() {
+  ui.planTitle.textContent = activePlanTitle();
+}
+
+function setPresetSelection(id) {
+  for (const btn of ui.presetRow.children) {
+    const isActive = state.currentPlanSource === "preset" && btn.dataset.preset === id;
+    btn.classList.toggle("is-active", isActive);
+    btn.setAttribute("aria-selected", isActive ? "true" : "false");
   }
+}
+
+function effectiveTargetIntensity(now) {
+  const dt = now - state.presetSwitchAt;
+  if (dt < PRESET_DUCK_MS) return 0;
   return state.targetIntensity;
 }
 
@@ -220,19 +264,130 @@ function updateIntensitySliderFill(value) {
   ui.intensityValue.textContent = String(Math.round(value * 100));
 }
 
+function announcePlanSwitch() {
+  state.presetSwitchAt = performance.now();
+  resetTrail();
+}
+
 function selectPreset(id) {
   const preset = findPreset(id);
-  if (preset.id === state.presetId) return;
   state.presetId = preset.id;
-  state.presetSwitchAt = performance.now();
-  ui.planTitle.textContent = preset.plan ? preset.plan.title : preset.title;
-  // Reset any persistent layers (the trail canvas) so the new preset starts
-  // clean instead of inheriting smear from the previous one.
-  resetTrail();
-  for (const btn of ui.presetRow.children) {
-    const active = btn.dataset.preset === id;
-    btn.classList.toggle("is-active", active);
-    btn.setAttribute("aria-selected", active ? "true" : "false");
+  state.currentPlanSource = "preset";
+  state.currentPlan = null;
+  state.lastPlanError = null;
+  state.lastPlanWarnings = [];
+  setPromptStatus("", null);
+  announcePlanSwitch();
+  refreshPlanTitle();
+  setPresetSelection(preset.id);
+  refreshInspector();
+}
+
+function applyLlmPlan(plan, source, warnings) {
+  state.currentPlan = plan;
+  state.currentPlanSource = source === "mock" ? "mock" : "llm";
+  state.lastPlanError = null;
+  state.lastPlanWarnings = warnings || [];
+  announcePlanSwitch();
+  refreshPlanTitle();
+  setPresetSelection(null);
+  if (source === "mock") {
+    setPromptStatus("mock", "mock");
+  } else {
+    setPromptStatus("applied", "ok");
+  }
+  if (warnings && warnings.length > 0) {
+    console.warn("[plan] warnings:", warnings);
+  }
+  refreshInspector();
+}
+
+const INSPECTOR_SOURCE_LABEL = {
+  preset: "preset",
+  llm: "llm",
+  mock: "mock",
+};
+
+function refreshInspector() {
+  const plan = activePlan();
+  ui.inspectorJson.textContent = plan ? JSON.stringify(plan, null, 2) : "{}";
+
+  const source = state.currentPlanSource;
+  ui.inspectorSource.textContent = INSPECTOR_SOURCE_LABEL[source] || source;
+  ui.inspectorSource.className = `inspector__source is-${source}`;
+
+  ui.inspectorMeta.replaceChildren();
+  if (state.lastPlanError) {
+    const span = document.createElement("span");
+    span.className = "err";
+    span.textContent = `error: ${state.lastPlanError}`;
+    ui.inspectorMeta.appendChild(span);
+  }
+  if (state.lastPlanWarnings && state.lastPlanWarnings.length > 0) {
+    if (ui.inspectorMeta.childNodes.length > 0) {
+      ui.inspectorMeta.appendChild(document.createElement("br"));
+    }
+    const span = document.createElement("span");
+    span.className = "warn";
+    span.textContent = `warnings: ${state.lastPlanWarnings.join(", ")}`;
+    ui.inspectorMeta.appendChild(span);
+  }
+  if (ui.inspectorMeta.childNodes.length === 0) {
+    ui.inspectorMeta.textContent = "—";
+  }
+}
+
+function setInspectorOpen(open) {
+  state.inspectorOpen = open;
+  ui.inspector.classList.toggle("is-open", open);
+  ui.inspector.setAttribute("aria-hidden", open ? "false" : "true");
+  ui.inspectorToggle.classList.toggle("is-active", open);
+  ui.inspectorToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open) refreshInspector();
+}
+
+function setHideFeed(hide) {
+  state.hideFeed = hide;
+  ui.feedToggle.classList.toggle("is-active", hide);
+  ui.feedToggle.setAttribute("aria-pressed", hide ? "true" : "false");
+}
+
+async function submitPrompt() {
+  if (state.promptPending) return;
+  const text = ui.promptInput.value.trim();
+  if (!text) return;
+
+  state.promptPending = true;
+  ui.promptSubmit.disabled = true;
+  setPromptStatus("planning…", null);
+
+  const detectedClasses = state.sceneSignals?.classes || [];
+  const payload = {
+    userPrompt: text,
+    detectedClasses,
+    signals: state.sceneSignals || {},
+    currentPlan: state.currentPlan
+      ? { title: state.currentPlan.title }
+      : null,
+    supportedActions: ["localEdges", "localLines", "aura", "trail", "spotlight", "glitch"],
+    supportedBlendModes: ["normal", "screen", "multiply", "difference", "overlay"],
+    supportedLabelModes: ["literal", "poetic", "hidden"],
+  };
+
+  try {
+    const { plan, source, warnings } = await requestActionPlan(payload);
+    if (!plan || !plan.objectRules || plan.objectRules.length === 0) {
+      throw new Error("empty_plan");
+    }
+    applyLlmPlan(plan, source, warnings);
+  } catch (err) {
+    console.error("[plan] failed:", err);
+    state.lastPlanError = err.message || String(err);
+    setPromptStatus("invalid", "err");
+    refreshInspector();
+  } finally {
+    state.promptPending = false;
+    ui.promptSubmit.disabled = false;
   }
 }
 
@@ -244,7 +399,10 @@ function buildPresetUi() {
     btn.dataset.preset = p.id;
     btn.textContent = p.title;
     btn.setAttribute("role", "tab");
-    btn.setAttribute("aria-selected", p.id === state.presetId ? "true" : "false");
+    btn.setAttribute(
+      "aria-selected",
+      state.currentPlanSource === "preset" && p.id === state.presetId ? "true" : "false",
+    );
     btn.addEventListener("click", () => selectPreset(p.id));
     ui.presetRow.appendChild(btn);
   }
@@ -252,6 +410,8 @@ function buildPresetUi() {
 
 function wireUi() {
   buildPresetUi();
+  refreshPlanTitle();
+
   const onSlider = () => {
     const v = Number(ui.intensitySlider.value) / 100;
     state.targetIntensity = v;
@@ -260,12 +420,14 @@ function wireUi() {
   ui.intensitySlider.addEventListener("input", onSlider);
   onSlider();
 
-  ui.feedToggle.addEventListener("click", () => {
-    state.hideFeed = !state.hideFeed;
-    ui.feedToggle.classList.toggle("is-active", state.hideFeed);
-    ui.feedToggle.setAttribute("aria-pressed", state.hideFeed ? "true" : "false");
-    ui.feedToggle.textContent = state.hideFeed ? "Show Feed" : "Hide Feed";
+  ui.promptForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    submitPrompt();
   });
+
+  ui.inspectorToggle.addEventListener("click", () => setInspectorOpen(!state.inspectorOpen));
+  ui.inspectorClose.addEventListener("click", () => setInspectorOpen(false));
+  ui.feedToggle.addEventListener("click", () => setHideFeed(!state.hideFeed));
 
   ui.cameraBtn.addEventListener("click", switchToCamera);
   ui.videoUpload.addEventListener("change", async (e) => {
@@ -280,13 +442,53 @@ function wireUi() {
     e.target.value = "";
   });
 
-  // Keyboard shortcuts: 1..N picks presets in order.
+  // Keyboard shortcuts.
   window.addEventListener("keydown", (e) => {
+    // Escape blurs the prompt from anywhere; also closes the inspector.
+    if (e.key === "Escape" && document.activeElement === ui.promptInput) {
+      ui.promptInput.blur();
+      e.preventDefault();
+      return;
+    }
+    // While the prompt is focused, don't intercept anything else.
+    if (document.activeElement === ui.promptInput) return;
+
+    if (e.key === "Escape" && state.inspectorOpen) {
+      setInspectorOpen(false);
+      e.preventDefault();
+      return;
+    }
+
+    // "/" focuses the prompt input.
+    if (e.key === "/") {
+      e.preventDefault();
+      ui.promptInput.focus();
+      ui.promptInput.select();
+      return;
+    }
+
+    // "i" toggles the inspector.
+    if (e.key === "i" || e.key === "I") {
+      e.preventDefault();
+      setInspectorOpen(!state.inspectorOpen);
+      return;
+    }
+
+    // "c" toggles the camera feed.
+    if (e.key === "c" || e.key === "C") {
+      e.preventDefault();
+      setHideFeed(!state.hideFeed);
+      return;
+    }
+
+    // 1..N picks presets.
     const n = Number(e.key);
     if (Number.isInteger(n) && n >= 1 && n <= PRESETS.length) {
       selectPreset(PRESETS[n - 1].id);
     }
   });
+
+  refreshInspector();
 }
 
 async function loop() {
@@ -303,20 +505,20 @@ async function loop() {
       state.geometries = isCvReady()
         ? computeObjectGeometry(captureCanvas, state.objects)
         : new Map();
+      state.sceneSignals = computeSceneSignals(state.objects);
 
-      // EMA the master intensity toward its effective target (duck-aware).
       const target = effectiveTargetIntensity(now);
       state.currentIntensity += (target - state.currentIntensity) * INTENSITY_SMOOTHING;
       if (state.currentIntensity < 0.001) state.currentIntensity = 0;
 
-      const preset = findPreset(state.presetId);
-      if (preset.plan && state.currentIntensity > 0.01) {
+      const plan = activePlan();
+      if (plan && state.currentIntensity > 0.01) {
         drawStyledPlan(
           outputCtx,
           captureCanvas,
           state.objects,
           state.geometries,
-          preset.plan,
+          plan,
           { intensity: state.currentIntensity, timeMs: now, hideFeed: state.hideFeed },
         );
       } else {

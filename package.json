@@ -1,0 +1,14 @@
+{
+  "name": "latent-canvas",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Live object-aware computer-vision instrument with a deterministic action renderer driven by an LLM-generated ActionPlan.",
+  "type": "module",
+  "scripts": {
+    "start": "node server/planRoute.js",
+    "dev": "node server/planRoute.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1"
+  }
+}

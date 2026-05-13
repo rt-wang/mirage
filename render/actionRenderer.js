@@ -161,7 +161,6 @@ export function drawStyledPlan(ctx, captureCanvas, objects, geometries, plan, op
   const h = ctx.canvas.height;
   const intensity = Math.max(0, Math.min(1, opts.intensity ?? 1));
   const timeMs = opts.timeMs ?? performance.now();
-  const hideFeed = opts.hideFeed ?? false;
   const gs = plan.globalStyle || {};
   const matches = buildMatches(objects, plan);
 
@@ -169,7 +168,7 @@ export function drawStyledPlan(ctx, captureCanvas, objects, geometries, plan, op
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 
   // 1 + 2.
-  drawSourceWithGlobalStyle(ctx, captureCanvas, gs, intensity, hideFeed);
+  drawSourceWithGlobalStyle(ctx, captureCanvas, gs, intensity, opts.hideFeed);
   drawTint(ctx, gs, intensity);
 
   // 3. Trails — collect, fade once, paint per object, composite once.

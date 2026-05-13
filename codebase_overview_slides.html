@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Latent Canvas Codebase Overview</title>
+    <style>
+      :root {
+        --bg: #07080a;
+        --panel: #10131a;
+        --panel-2: #151924;
+        --ink: #eef2f7;
+        --muted: #9aa4b6;
+        --line: rgba(255, 255, 255, 0.13);
+        --green: #7ef0c5;
+        --blue: #7ab4ff;
+        --gold: #f2ca74;
+        --pink: #ff78c8;
+        --red: #ff7668;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background:
+          radial-gradient(circle at 12% 18%, rgba(126, 240, 197, 0.14), transparent 28%),
+          radial-gradient(circle at 88% 78%, rgba(255, 120, 200, 0.11), transparent 30%),
+          linear-gradient(140deg, #07080a 0%, #0f1118 48%, #090a0e 100%);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        overflow: hidden;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        background-size: 56px 56px;
+        mask-image: radial-gradient(circle at center, black 20%, transparent 82%);
+      }
+
+      .deck {
+        width: 100vw;
+        height: 100vh;
+        position: relative;
+      }
+
+      .slide {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 28px;
+        padding: clamp(28px, 5vw, 72px);
+        opacity: 0;
+        transform: translateX(26px) scale(0.985);
+        pointer-events: none;
+        transition:
+          opacity 220ms ease,
+          transform 220ms ease;
+      }
+
+      .slide.is-active {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+        pointer-events: auto;
+      }
+
+      .slide__topline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .slide__num {
+        color: var(--green);
+      }
+
+      .slide__body {
+        display: grid;
+        align-content: center;
+        gap: 30px;
+        max-width: 1180px;
+        width: 100%;
+        margin: 0 auto;
+      }
+
+      .slide__footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        max-width: 980px;
+        font-size: clamp(52px, 7vw, 104px);
+        line-height: 0.92;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        max-width: 980px;
+        font-size: clamp(36px, 5vw, 74px);
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+
+      h3 {
+        color: var(--green);
+        font-size: 17px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .lead {
+        max-width: 920px;
+        color: var(--muted);
+        font-size: clamp(19px, 2.2vw, 30px);
+        line-height: 1.38;
+      }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 22px;
+      }
+
+      .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+      }
+
+      .card {
+        min-height: 150px;
+        padding: 22px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02)),
+          var(--panel);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+      }
+
+      .card strong {
+        display: block;
+        color: var(--ink);
+        font-size: 22px;
+        line-height: 1.15;
+        margin-bottom: 10px;
+      }
+
+      .card span,
+      .card p {
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.48;
+      }
+
+      .pipeline {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(110px, 1fr));
+        gap: 12px;
+        align-items: stretch;
+      }
+
+      .node {
+        min-height: 130px;
+        padding: 16px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        display: grid;
+        align-content: center;
+        gap: 8px;
+        position: relative;
+      }
+
+      .node::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        right: -10px;
+        width: 8px;
+        height: 2px;
+        background: var(--line);
+      }
+
+      .node:last-child::after {
+        display: none;
+      }
+
+      .node b {
+        color: var(--ink);
+        font-size: 17px;
+      }
+
+      .node small {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.35;
+      }
+
+      .tag-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .tag {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.055);
+        padding: 8px 12px;
+        font-size: 14px;
+      }
+
+      .file-map {
+        display: grid;
+        grid-template-columns: 1.05fr 1.1fr;
+        gap: 24px;
+      }
+
+      .tree {
+        padding: 22px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: rgba(0, 0, 0, 0.28);
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 16px;
+        line-height: 1.5;
+        white-space: pre;
+      }
+
+      .callout {
+        border-left: 4px solid var(--green);
+        padding: 16px 20px;
+        background: rgba(126, 240, 197, 0.08);
+        color: var(--ink);
+        font-size: 21px;
+        line-height: 1.4;
+      }
+
+      .notes {
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.42;
+      }
+
+      .notes b {
+        color: var(--gold);
+        font-weight: 700;
+      }
+
+      .accent-green {
+        color: var(--green);
+      }
+
+      .accent-blue {
+        color: var(--blue);
+      }
+
+      .accent-gold {
+        color: var(--gold);
+      }
+
+      .accent-pink {
+        color: var(--pink);
+      }
+
+      .steps {
+        display: grid;
+        gap: 14px;
+      }
+
+      .step {
+        display: grid;
+        grid-template-columns: 46px 1fr;
+        gap: 16px;
+        align-items: start;
+      }
+
+      .step__n {
+        width: 38px;
+        height: 38px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: var(--green);
+        color: #06120e;
+        font-weight: 800;
+      }
+
+      .step p {
+        color: var(--muted);
+        font-size: 18px;
+        line-height: 1.42;
+      }
+
+      .step strong {
+        color: var(--ink);
+      }
+
+      .progress {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.08);
+        z-index: 20;
+      }
+
+      .progress__bar {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, var(--green), var(--blue), var(--pink));
+        transition: width 220ms ease;
+      }
+
+      .controls {
+        position: fixed;
+        right: 20px;
+        bottom: 18px;
+        display: flex;
+        gap: 8px;
+        z-index: 30;
+      }
+
+      button {
+        appearance: none;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--ink);
+        background: rgba(10, 12, 16, 0.78);
+        padding: 9px 13px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button:hover {
+        border-color: rgba(126, 240, 197, 0.55);
+      }
+
+      @media (max-width: 900px) {
+        .grid-2,
+        .grid-3,
+        .file-map {
+          grid-template-columns: 1fr;
+        }
+
+        .pipeline {
+          grid-template-columns: repeat(2, 1fr);
+        }
+
+        .node::after {
+          display: none;
+        }
+
+        .slide {
+          overflow-y: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="deck" aria-live="polite">
+      <section class="slide is-active">
+        <div class="slide__topline">
+          <span>Latent Canvas</span>
+          <span class="slide__num">01 / 09</span>
+        </div>
+        <div class="slide__body">
+          <h1>Codebase overview</h1>
+          <p class="lead">
+            A 5-minute walkthrough of how the browser turns webcam video into
+            object-aware, object-local creative rendering.
+          </p>
+          <div class="tag-row">
+            <span class="tag">Webcam</span>
+            <span class="tag">COCO-SSD</span>
+            <span class="tag">OpenCV.js</span>
+            <span class="tag">Canvas renderer</span>
+            <span class="tag">ActionPlan schema</span>
+          </div>
+        </div>
+        <div class="slide__footer">
+          <span>Talk time: 20 seconds</span>
+          <span>Structure first, implementation second</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide__topline">
+          <span>What This App Is</span>
+          <span class="slide__num">02 / 09</span>
+        </div>
+        <div class="slide__body">
+          <h2>The core idea is an <span class="accent-green">object-first visual instrument</span>.</h2>
+          <div class="grid-3">
+            <div class="card">
+              <strong>Detection finds attention</strong>
+              <span>COCO-SSD identifies objects in the mirrored webcam frame.</span>
+            </div>
+            <div class="card">
+              <strong>Local CV finds structure</strong>
+              <span>OpenCV runs edges and lines inside each detected object box.</span>
+            </div>
+            <div class="card">
+              <strong>Actions create style</strong>
+              <span>The renderer composes deterministic visual effects from an ActionPlan.</span>
+            </div>
+          </div>
+          <p class="notes">
+            <b>Speaker beat:</b> This is no longer a multi-mode CV demo. The object detector is
+            the root layer, and every creative effect hangs off tracked object regions.
+          </p>
+        </div>
+        <div class="slide__footer">
+          <span>Talk time: 35 seconds</span>
+          <span>Design thesis</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide__topline">
+          <span>Runtime Pipeline</span>
+          <span class="slide__num">03 / 09</span>
+        </div>
+        <div class="slide__body">
+          <h2>The app is one loop with clear handoffs.</h2>
+          <div class="pipeline">
+            <div class="node">
+              <b>Camera</b>
+              <small>getUserMedia creates the hidden video source.</small>
+            </div>
+            <div class="node">
+              <b>Capture</b>
+              <small>app.js mirrors each frame into captureCanvas.</small>
+            </div>
+            <div class="node">
+              <b>Detect</b>
+              <small>objectDetector.js runs COCO-SSD.</small>
+            </div>
+            <div class="node">
+              <b>Track</b>
+              <small>objectTracker.js assigns stable IDs.</small>
+            </div>
+            <div class="node">
+              <b>Local CV</b>
+              <small>objectLocalCv.js extracts object-local geometry.</small>
+            </div>
+            <div class="node">
+              <b>Render</b>
+              <small>actionRenderer.js draws the active plan.</small>
+            </div>
+          </div>
+          <p class="notes">
+            <b>Speaker beat:</b> The important architectural move is that every stage returns
+            structured data to the next stage. The renderer is not re-detecting objects or
+            rethinking analysis.
+          </p>
+        </div>
+        <div class="slide__footer">
+          <span>Talk time: 45 seconds</span>
+          <span>One frame at a time</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide__topline">
+          <span>File Map</span>
+          <span class="slide__num">04 / 09</span>
+        </div>
+        <div class="slide__body">
+          <h2>Most of the repo separates into <span class="accent-blue">analysis</span>, <span class="accent-gold">rendering</span>, and <span class="accent-pink">plans</span>.</h2>
+          <div class="file-map">
+            <pre class="tree">vision_demo/
+  app.js
+  index.html
+  styles.css
+
+  analysis/
+    objectDetector.js
+    objectTracker.js
+    objectLocalCv.js
+
+  render/
+    neutralPreview.js
+    actionRenderer.js
+    actions/
+
+  llm/
+    actionPlanSchema.js
+    defaultPlans.js</pre>
+            <div class="steps">
+              <div class="step">
+                <div class="step__n">1</div>
+                <p><strong>app.js</strong> owns the runtime loop, UI state, camera setup, and plan selection.</p>
+              </div>
+              <div class="step">
+                <div class="step__n">2</div>
+                <p><strong>analysis/</strong> turns pixels into tracked objects and object-local geometry.</p>
+              </div>
+              <div class="step">
+                <div class="step__n">3</div>
+                <p><strong>render/</strong> turns objects, geometry, and action parameters into canvas output.</p>
+              </div>
+              <div class="step">
+                <div class="step__n">4</div>
+                <p><strong>llm/</strong> defines the safe vocabulary that presets, and later the LLM, can use.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="slide__footer">
+          <span>Talk time: 45 seconds</span>
+          <span>Orientation map</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide__topline">
+          <span>Data Model</span>
+          <span class="slide__num">05 / 09</span>
+        </div>
+        <div class="slide__body">
+          <h2>Everything depends on the tracked object as the shared contract.</h2>
+          <div class="grid-2">
+            <div class="card">
+              <strong>DetectedObject</strong>
+              <span>
+                Stable ID, class name, confidence, smoothed bbox, center, area, velocity,
+                selected flag, and stale state.
+              </span>
+            </div>
+            <div class="card">
+              <strong>ObjectGeometry</strong>
+              <span>
+                Local edge mask, local Hough lines, geometry origin, bbox, and future
+                local-depth or freeze data.
+              </span>
+            </div>
+          </div>
+          <div class="callout">
+            Object detection decides <span class="accent-green">where</span> the system looks.
+            Object-local CV decides <span class="accent-blue">what structure</span> is available there.
+            Action plans decide <span class="accent-pink">how it feels</span>.
+          </div>
+          <p class="notes">
+            <b>Speaker beat:</b> This keeps the LLM layer clean later. It does not need raw
+            pixels. It only needs object classes, scene signals, and the action schema.
+          </p>
+        </div>
+        <div class="slide__footer">
+          <span>Talk time: 40 seconds</span>
+          <span>Shared contracts</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide__topline">
+          <span>Rendering System</span>
+          <span class="slide__num">06 / 09</span>
+        </div>
+        <div class="slide__body">
+          <h2>The renderer is a small compositor, not a pile of presets.</h2>
+          <div class="grid-3">
+            <div class="card">
+              <strong>Global style</strong>
+              <span>Source opacity, tint, contrast, saturation, grain, and blend mode.</span>
+            </div>
+            <div class="card">
+              <strong>Object rules</strong>
+              <span>Selectors choose all objects, specific classes, largest object, or selected object.</span>
+            </div>
+            <div class="card">
+              <strong>Actions</strong>
+              <span>Aura, trail, spotlight, glitch, local edges, and local lines compose per object.</span>
+            </div>
+          </div>
+          <p class="notes">
+            <b>Speaker beat:</b> The four visible presets are not the limit. They are sample
+            JSON plans. The renderer can accept many new combinations as long as they validate
+            against the safe action vocabulary.
+          </p>
+        </div>
+        <div class="slide__footer">
+          <span>Talk time: 40 seconds</span>
+          <span>ActionPlan mental model</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide__topline">
+          <span>Current Actions</span>
+          <span class="slide__num">07 / 09</span>
+        </div>
+        <div class="slide__body">
+          <h2>The creative vocabulary is already modular.</h2>
+          <div class="grid-3">
+            <div class="card">
+              <strong>localEdges</strong>
+              <span>Recolors Canny masks inside object boxes with glow and thickness.</span>
+            </div>
+            <div class="card">
+              <strong>localLines</strong>
+              <span>Draws Hough segments with line weight, color, and jitter.</span>
+            </div>
+            <div class="card">
+              <strong>aura</strong>
+              <span>Creates a pulsing radial field centered on an object.</span>
+            </div>
+            <div class="card">
+              <strong>trail</strong>
+              <span>Uses a persistent canvas to smear object crops over time.</span>
+            </div>
+            <div class="card">
+              <strong>spotlight</strong>
+              <span>Dims the world outside an object-centered region.</span>
+            </div>
+            <div class="card">
+              <strong>glitch</strong>
+              <span>Slices and displaces object crops over the styled source.</span>
+            </div>
+          </div>
+        </div>
+        <div class="slide__footer">
+          <span>Talk time: 35 seconds</span>
+          <span>Vocabulary, not modes</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide__topline">
+          <span>Phase 4</span>
+          <span class="slide__num">08 / 09</span>
+        </div>
+        <div class="slide__body">
+          <h2>The next layer is an LLM planner that chooses safe JSON.</h2>
+          <div class="grid-2">
+            <div class="card">
+              <strong>What the LLM can change</strong>
+              <span>
+                Object targets, labels, colors, blend mode, global style, and combinations
+                of supported actions.
+              </span>
+            </div>
+            <div class="card">
+              <strong>What the LLM cannot change</strong>
+              <span>
+                JavaScript, OpenCV calls, model loading, network URLs, arbitrary CSS,
+                or unsupported action names.
+              </span>
+            </div>
+          </div>
+          <div class="callout">
+            Phase 4 should add validation first, then prompt UI, then richer actions like
+            <span class="accent-blue">localDepth</span> and <span class="accent-gold">freezeBox</span>.
+          </div>
+          <p class="notes">
+            <b>Speaker beat:</b> This gives AI a real creative surface without making the
+            browser execute model-generated code. The model is an art director, not a runtime.
+          </p>
+        </div>
+        <div class="slide__footer">
+          <span>Talk time: 45 seconds</span>
+          <span>Safe expansion path</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="slide__topline">
+          <span>Closing Summary</span>
+          <span class="slide__num">09 / 09</span>
+        </div>
+        <div class="slide__body">
+          <h2>How to explain the whole codebase in one sentence:</h2>
+          <p class="lead">
+            Latent Canvas captures webcam frames, detects and tracks objects, extracts local
+            geometry from each object box, then renders deterministic creative actions selected
+            by presets today and by a validated LLM planner next.
+          </p>
+          <div class="grid-3">
+            <div class="card">
+              <strong>Stable center</strong>
+              <span>The tracked object is the main abstraction.</span>
+            </div>
+            <div class="card">
+              <strong>Clean boundary</strong>
+              <span>Analysis creates geometry. Rendering consumes geometry.</span>
+            </div>
+            <div class="card">
+              <strong>Future-ready</strong>
+              <span>The ActionPlan schema is the bridge to AI direction.</span>
+            </div>
+          </div>
+        </div>
+        <div class="slide__footer">
+          <span>Talk time: 35 seconds</span>
+          <span>Total: about 5 minutes</span>
+        </div>
+      </section>
+    </main>
+
+    <div class="controls" aria-label="Slide controls">
+      <button type="button" id="prev">Prev</button>
+      <button type="button" id="next">Next</button>
+    </div>
+    <div class="progress" aria-hidden="true">
+      <div class="progress__bar" id="progress"></div>
+    </div>
+
+    <script>
+      const slides = Array.from(document.querySelectorAll(".slide"));
+      const progress = document.getElementById("progress");
+      const prev = document.getElementById("prev");
+      const next = document.getElementById("next");
+      let index = 0;
+
+      function showSlide(nextIndex) {
+        index = Math.max(0, Math.min(slides.length - 1, nextIndex));
+        slides.forEach((slide, i) => slide.classList.toggle("is-active", i === index));
+        progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+        prev.disabled = index === 0;
+        next.disabled = index === slides.length - 1;
+      }
+
+      prev.addEventListener("click", () => showSlide(index - 1));
+      next.addEventListener("click", () => showSlide(index + 1));
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowRight" || event.key === " ") showSlide(index + 1);
+        if (event.key === "ArrowLeft") showSlide(index - 1);
+      });
+
+      showSlide(0);
+    </script>
+  </body>
+</html>
