@@ -71,21 +71,21 @@ function buildMatches(objects, plan) {
   });
 }
 
-function drawSourceWithGlobalStyle(ctx, captureCanvas, gs, intensity) {
+function drawSourceWithGlobalStyle(ctx, captureCanvas, gs, intensity, hideFeed) {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
-  // Black backdrop so reduced sourceOpacity reveals darkness instead of
-  // last-frame content (we cleared but be defensive when intensity ramps).
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
 
-  const contrast = 0.5 + (gs.contrast - 0.5) * 2 * intensity;
-  const saturation = 1 + (gs.saturation - 0.5) * 2 * intensity;
-  ctx.filter = `contrast(${contrast}) saturate(${saturation})`;
-  ctx.globalAlpha = 1 - (1 - gs.sourceOpacity) * intensity;
-  ctx.drawImage(captureCanvas, 0, 0);
-  ctx.filter = "none";
-  ctx.globalAlpha = 1;
+  if (!hideFeed) {
+    const contrast = 0.5 + (gs.contrast - 0.5) * 2 * intensity;
+    const saturation = 1 + (gs.saturation - 0.5) * 2 * intensity;
+    ctx.filter = `contrast(${contrast}) saturate(${saturation})`;
+    ctx.globalAlpha = 1 - (1 - gs.sourceOpacity) * intensity;
+    ctx.drawImage(captureCanvas, 0, 0);
+    ctx.filter = "none";
+    ctx.globalAlpha = 1;
+  }
 }
 
 function drawTint(ctx, gs, intensity) {
@@ -161,6 +161,7 @@ export function drawStyledPlan(ctx, captureCanvas, objects, geometries, plan, op
   const h = ctx.canvas.height;
   const intensity = Math.max(0, Math.min(1, opts.intensity ?? 1));
   const timeMs = opts.timeMs ?? performance.now();
+  const hideFeed = opts.hideFeed ?? false;
   const gs = plan.globalStyle || {};
   const matches = buildMatches(objects, plan);
 
@@ -168,7 +169,7 @@ export function drawStyledPlan(ctx, captureCanvas, objects, geometries, plan, op
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 
   // 1 + 2.
-  drawSourceWithGlobalStyle(ctx, captureCanvas, gs, intensity);
+  drawSourceWithGlobalStyle(ctx, captureCanvas, gs, intensity, hideFeed);
   drawTint(ctx, gs, intensity);
 
   // 3. Trails — collect, fade once, paint per object, composite once.

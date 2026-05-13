@@ -41,6 +41,11 @@ const ui = {
   presetRow: document.getElementById("presetRow"),
   intensitySlider: document.getElementById("intensitySlider"),
   intensityValue: document.getElementById("intensityValue"),
+  feedToggle: document.getElementById("feedToggle"),
+  cameraBtn: document.getElementById("cameraBtn"),
+  videoUpload: document.getElementById("videoUpload"),
+  uploadLabel: document.getElementById("uploadLabel"),
+  sourceFilename: document.getElementById("sourceFilename"),
   boot: document.getElementById("boot"),
   bootStep: document.getElementById("bootStep"),
   bootBar: document.getElementById("bootBar"),
@@ -52,6 +57,11 @@ const state = {
   objects: [],
   geometries: new Map(),
   presetId: "neutral",
+  hideFeed: false,
+  sourceMode: "camera",
+  mirrorCapture: true,
+  cameraStream: null,
+  videoObjectUrl: null,
   // Master intensity: targetIntensity is what the slider asks for; current
   // chases it via EMA so changes don't snap.
   targetIntensity: 0.8,
@@ -79,8 +89,8 @@ function hideBoot() {
   ui.boot.classList.add("is-hidden");
 }
 
-async function setupCamera() {
-  setBootStep("requesting camera…", 10);
+async function startCamera() {
+  video.src = "";
   const stream = await navigator.mediaDevices.getUserMedia({
     video: {
       width: { ideal: 1280 },
@@ -89,14 +99,74 @@ async function setupCamera() {
     },
     audio: false,
   });
+  state.cameraStream = stream;
   video.srcObject = stream;
+  video.loop = false;
+  state.mirrorCapture = true;
+  state.sourceMode = "camera";
   await new Promise((resolve) => {
     if (video.readyState >= 2) return resolve();
     video.onloadedmetadata = () => resolve();
   });
   await video.play();
   sizeCanvases();
+}
+
+async function setupCamera() {
+  setBootStep("requesting camera…", 10);
+  await startCamera();
   setBootStep("camera ready", 40);
+}
+
+async function setupVideoFile(file) {
+  if (state.cameraStream) {
+    state.cameraStream.getTracks().forEach((t) => t.stop());
+    state.cameraStream = null;
+    video.srcObject = null;
+  }
+  if (state.videoObjectUrl) {
+    URL.revokeObjectURL(state.videoObjectUrl);
+  }
+  state.videoObjectUrl = URL.createObjectURL(file);
+  video.src = state.videoObjectUrl;
+  video.loop = true;
+  state.mirrorCapture = false;
+  state.sourceMode = "video";
+  await new Promise((resolve) => {
+    if (video.readyState >= 2) return resolve();
+    video.onloadedmetadata = () => resolve();
+  });
+  await video.play();
+  sizeCanvases();
+  updateSourceUi(file.name);
+}
+
+async function switchToCamera() {
+  if (state.sourceMode === "camera") return;
+  video.pause();
+  if (state.videoObjectUrl) {
+    URL.revokeObjectURL(state.videoObjectUrl);
+    state.videoObjectUrl = null;
+  }
+  try {
+    await startCamera();
+    updateSourceUi(null);
+  } catch (err) {
+    console.error("[switchToCamera]", err);
+    setStatus("camera error");
+  }
+}
+
+function updateSourceUi(filename) {
+  const inVideo = state.sourceMode === "video";
+  ui.cameraBtn.classList.toggle("is-active", !inVideo);
+  ui.uploadLabel.classList.toggle("is-active", inVideo);
+  if (filename) {
+    const short = filename.length > 30 ? filename.slice(0, 28) + "…" : filename;
+    ui.sourceFilename.textContent = short;
+  } else {
+    ui.sourceFilename.textContent = "";
+  }
 }
 
 function sizeCanvases() {
@@ -112,7 +182,9 @@ function captureFrame() {
   const w = captureCanvas.width;
   const h = captureCanvas.height;
   captureCtx.save();
-  captureCtx.setTransform(-1, 0, 0, 1, w, 0);
+  if (state.mirrorCapture) {
+    captureCtx.setTransform(-1, 0, 0, 1, w, 0);
+  }
   captureCtx.drawImage(video, 0, 0, w, h);
   captureCtx.restore();
 }
@@ -188,6 +260,26 @@ function wireUi() {
   ui.intensitySlider.addEventListener("input", onSlider);
   onSlider();
 
+  ui.feedToggle.addEventListener("click", () => {
+    state.hideFeed = !state.hideFeed;
+    ui.feedToggle.classList.toggle("is-active", state.hideFeed);
+    ui.feedToggle.setAttribute("aria-pressed", state.hideFeed ? "true" : "false");
+    ui.feedToggle.textContent = state.hideFeed ? "Show Feed" : "Hide Feed";
+  });
+
+  ui.cameraBtn.addEventListener("click", switchToCamera);
+  ui.videoUpload.addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      await setupVideoFile(file);
+    } catch (err) {
+      console.error("[videoUpload]", err);
+      setStatus("video error");
+    }
+    e.target.value = "";
+  });
+
   // Keyboard shortcuts: 1..N picks presets in order.
   window.addEventListener("keydown", (e) => {
     const n = Number(e.key);
@@ -225,10 +317,10 @@ async function loop() {
           state.objects,
           state.geometries,
           preset.plan,
-          { intensity: state.currentIntensity, timeMs: now },
+          { intensity: state.currentIntensity, timeMs: now, hideFeed: state.hideFeed },
         );
       } else {
-        drawNeutralPreview(outputCtx, captureCanvas, state.objects, state.geometries);
+        drawNeutralPreview(outputCtx, captureCanvas, state.objects, state.geometries, { hideFeed: state.hideFeed });
       }
 
       updateCountBadge(state.objects);

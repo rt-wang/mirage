@@ -33,21 +33,31 @@
 
           <div class="overlay overlay--bottom">
             <div class="controls">
+              <div class="source-row">
+                <button id="cameraBtn" class="source-btn is-active" type="button">Camera</button>
+                <label class="source-btn" id="uploadLabel" for="videoUpload">Upload Video</label>
+                <input type="file" id="videoUpload" accept="video/*" hidden>
+                <span class="source-filename" id="sourceFilename"></span>
+              </div>
+              <div class="source-divider"></div>
               <div class="presets" role="tablist" aria-label="Action plan presets" id="presetRow"></div>
-              <label class="intensity">
-                <span class="intensity__label">Intensity</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value="80"
-                  step="1"
-                  id="intensitySlider"
-                  class="intensity__slider"
-                  aria-label="Global intensity"
-                />
-                <span class="intensity__value" id="intensityValue">80</span>
-              </label>
+              <div class="bottom-row">
+                <label class="intensity">
+                  <span class="intensity__label">Intensity</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value="80"
+                    step="1"
+                    id="intensitySlider"
+                    class="intensity__slider"
+                    aria-label="Global intensity"
+                  />
+                  <span class="intensity__value" id="intensityValue">80</span>
+                </label>
+                <button id="feedToggle" class="feed-toggle" type="button" aria-pressed="false">Hide Feed</button>
+              </div>
             </div>
           </div>
 
