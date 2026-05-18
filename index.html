@@ -4,7 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Latent Canvas</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css" />
     <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/clike/clike.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/matchbrackets.js"></script>
   </head>
   <body>
     <main id="stage" class="stage">
@@ -19,6 +23,47 @@
           <div class="meta">
             <span id="fps" class="meta__fps">— fps</span>
             <span id="status" class="meta__status">booting</span>
+            <button
+              id="feedToggle"
+              class="meta__btn"
+              type="button"
+              aria-pressed="false"
+              title="Toggle camera feed (c)"
+            >CAM</button>
+            <button
+              id="sourceToggle"
+              class="meta__btn"
+              type="button"
+              aria-pressed="false"
+              title="Use a video file as the source"
+            >VIDEO</button>
+            <input
+              id="sourceFile"
+              type="file"
+              accept="video/*"
+              hidden
+            />
+            <button
+              id="viewToggle"
+              class="meta__btn"
+              type="button"
+              title="Cycle debug view (d)"
+            >SHADER</button>
+            <button
+              id="editorToggle"
+              class="meta__btn"
+              type="button"
+              aria-expanded="false"
+              aria-controls="editor"
+              title="Toggle shader editor (e)"
+            >GLSL</button>
+            <button
+              id="immersiveToggle"
+              class="meta__btn"
+              type="button"
+              aria-pressed="false"
+              title="Immersive view — hide all UI (i)"
+            >IMMERSIVE</button>
           </div>
         </header>
 
@@ -28,12 +73,24 @@
 
           <div class="overlay overlay--top">
             <span class="badge" id="countBadge">0 objects</span>
-            <span class="badge badge--title" id="planTitle">Neutral</span>
+            <span class="badge badge--title" id="shaderTitle">OpenCV Default</span>
           </div>
 
           <div class="overlay overlay--bottom">
             <div class="controls">
-              <div class="presets" role="tablist" aria-label="Action plan presets" id="presetRow"></div>
+              <form class="prompt" id="promptForm" autocomplete="off">
+                <input
+                  type="text"
+                  id="promptInput"
+                  class="prompt__input"
+                  placeholder="describe the shader — e.g. thermal ghost foreground with electric green edges"
+                  maxlength="500"
+                  spellcheck="false"
+                  aria-label="Shader prompt"
+                />
+                <button type="submit" class="prompt__submit" id="promptSubmit">Generate</button>
+                <span class="prompt__status" id="promptStatus" role="status" aria-live="polite"></span>
+              </form>
               <label class="intensity">
                 <span class="intensity__label">Intensity</span>
                 <input
@@ -51,6 +108,56 @@
             </div>
           </div>
 
+          <aside id="editor" class="editor" aria-hidden="true" aria-label="Shader editor">
+            <header class="editor__header">
+              <span class="editor__title">FRAGMENT SHADER</span>
+              <span class="editor__source" id="editorSource">default</span>
+              <button id="editorRender" class="editor__btn editor__btn--accent" type="button" title="Compile + render (⌘/Ctrl+Enter)">Render</button>
+              <button id="editorReset" class="editor__btn" type="button" title="Reset to default shader">reset</button>
+              <button id="editorCopy" class="editor__btn" type="button" title="Copy shader source">copy</button>
+              <button id="editorClose" class="editor__close" type="button" aria-label="Close editor">×</button>
+            </header>
+            <div class="editor__meta" id="editorMeta">—</div>
+            <div class="editor__status" id="editorStatus" aria-live="polite">idle</div>
+            <div class="editor__body">
+              <div class="editor__gutter" aria-hidden="true">
+                <div class="editor__gutter-inner" id="editorGutter"></div>
+              </div>
+              <div class="editor__codewrap">
+                <textarea
+                  class="editor__code"
+                  id="editorCode"
+                  spellcheck="false"
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="off"
+                  wrap="off"
+                  aria-label="Editable fragment shader source"
+                ></textarea>
+              </div>
+            </div>
+            <pre class="editor__error" id="editorError" aria-live="polite"></pre>
+          </aside>
+
+          <div id="hints" class="hints" aria-label="Keyboard shortcuts">
+            <div class="hints__row"><kbd>/</kbd><span>focus prompt</span></div>
+            <div class="hints__row"><kbd>e</kbd><span>shader editor</span></div>
+            <div class="hints__row"><kbd>d</kbd><span>debug view</span></div>
+            <div class="hints__row"><kbd>c</kbd><span>toggle camera</span></div>
+            <div class="hints__row"><kbd>v</kbd><span>video file source</span></div>
+            <div class="hints__row"><kbd>i</kbd><span>immersive view</span></div>
+            <div class="hints__row"><kbd>⌘/Ctrl+↵</kbd><span>compile shader</span></div>
+            <div class="hints__row"><kbd>Esc</kbd><span>dismiss</span></div>
+          </div>
+
+          <button
+            id="immersiveExit"
+            class="immersive-exit"
+            type="button"
+            aria-label="Exit immersive view"
+            title="Exit immersive view (Esc / i)"
+          >×</button>
+
           <div id="boot" class="boot">
             <div class="boot__inner">
               <div class="boot__title">initializing vision</div>
@@ -65,7 +172,7 @@
     <!-- TensorFlow.js + COCO-SSD (object detection) -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
-    <!-- OpenCV.js (object-local CV: edges + lines inside each bbox) -->
+    <!-- OpenCV.js (foreground/background subtraction + scene-level edge mask) -->
     <script async src="https://docs.opencv.org/4.x/opencv.js" onload="window.__cvReady=true"></script>
 
     <script type="module" src="./app.js"></script>

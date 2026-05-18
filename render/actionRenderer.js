@@ -4,11 +4,12 @@
  * Render order per design section 8:
  *   1. Source video (with sourceOpacity + contrast/saturation filter)
  *   2. Background tint (global blend mode)
- *   3. Trails (batched once per frame)
- *   4. Object-local edges / lines
- *   5. Spotlight, aura, glitch
- *   6. Labels (literal | poetic | hidden)
- *   7. Grain + vignette
+ *   3. Foreground/background mask actions
+ *   4. Trails (batched once per frame)
+ *   5. Object-local edges / lines
+ *   6. Spotlight, aura, glitch
+ *   7. Labels (literal | poetic | hidden)
+ *   8. Grain + vignette
  *
  * The orchestrator first matches each tracked object against every objectRule
  * in the plan, accumulating actions and (last-rule-wins) the label setting.
@@ -19,6 +20,9 @@
 import { applyAura } from "./actions/aura.js";
 import { applyLocalEdges } from "./actions/localEdges.js";
 import { applyLocalLines } from "./actions/localLines.js";
+import { applyLocalDepth } from "./actions/localDepth.js";
+import { applyForegroundBackground } from "./actions/foregroundBackground.js";
+import { applyFreezeBox, pruneFrozenBoxes } from "./actions/freezeBox.js";
 import { applySpotlight } from "./actions/spotlight.js";
 import { applyGlitch } from "./actions/glitch.js";
 import {
@@ -71,21 +75,36 @@ function buildMatches(objects, plan) {
   });
 }
 
-function drawSourceWithGlobalStyle(ctx, captureCanvas, gs, intensity) {
+function collectUniqueActions(matches, type) {
+  const seen = new Set();
+  const out = [];
+  for (const { actions } of matches) {
+    for (const action of actions) {
+      if (action.type !== type) continue;
+      const key = JSON.stringify(action);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(action);
+    }
+  }
+  return out;
+}
+
+function drawSourceWithGlobalStyle(ctx, captureCanvas, gs, intensity, hideFeed) {
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
-  // Black backdrop so reduced sourceOpacity reveals darkness instead of
-  // last-frame content (we cleared but be defensive when intensity ramps).
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
 
-  const contrast = 0.5 + (gs.contrast - 0.5) * 2 * intensity;
-  const saturation = 1 + (gs.saturation - 0.5) * 2 * intensity;
-  ctx.filter = `contrast(${contrast}) saturate(${saturation})`;
-  ctx.globalAlpha = 1 - (1 - gs.sourceOpacity) * intensity;
-  ctx.drawImage(captureCanvas, 0, 0);
-  ctx.filter = "none";
-  ctx.globalAlpha = 1;
+  if (!hideFeed) {
+    const contrast = 0.5 + (gs.contrast - 0.5) * 2 * intensity;
+    const saturation = 1 + (gs.saturation - 0.5) * 2 * intensity;
+    ctx.filter = `contrast(${contrast}) saturate(${saturation})`;
+    ctx.globalAlpha = 1 - (1 - gs.sourceOpacity) * intensity;
+    ctx.drawImage(captureCanvas, 0, 0);
+    ctx.filter = "none";
+    ctx.globalAlpha = 1;
+  }
 }
 
 function drawTint(ctx, gs, intensity) {
@@ -168,10 +187,22 @@ export function drawStyledPlan(ctx, captureCanvas, objects, geometries, plan, op
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 
   // 1 + 2.
-  drawSourceWithGlobalStyle(ctx, captureCanvas, gs, intensity);
+  drawSourceWithGlobalStyle(ctx, captureCanvas, gs, intensity, opts.hideFeed);
   drawTint(ctx, gs, intensity);
 
-  // 3. Trails — collect, fade once, paint per object, composite once.
+  // 3. Foreground/background — scene-level MOG2 mask, deduped across matched objects.
+  const foregroundBackgroundActions = collectUniqueActions(matches, "foregroundBackground");
+  for (const action of foregroundBackgroundActions) {
+    applyForegroundBackground(ctx, {
+      foregroundBackground: opts.foregroundBackground,
+      action,
+      intensity,
+      w,
+      h,
+    });
+  }
+
+  // 4. Trails — collect, fade once, paint per object, composite once.
   const trailEntries = [];
   for (const { obj, actions } of matches) {
     for (const a of actions) if (a.type === "trail") trailEntries.push({ obj, a });
@@ -189,23 +220,46 @@ export function drawStyledPlan(ctx, captureCanvas, objects, geometries, plan, op
     const avgOpacity = opSum / trailEntries.length;
     const avgSmear = smSum / trailEntries.length;
     fadeTrailCanvas(w, h, avgLength);
+    const fgMask = opts.foregroundBackground?.foregroundMask;
     for (const { obj } of trailEntries) {
-      paintObjectIntoTrail(obj, captureCanvas, avgSmear);
+      paintObjectIntoTrail(obj, captureCanvas, avgSmear, fgMask);
     }
     compositeTrail(ctx, avgOpacity * intensity);
   }
 
-  // 4. Object-local edges + lines.
+  // 5a. Freeze boxes — pinned crops drawn before object-local geometry so
+  // edges/lines/depth from the live frame still read on top of the held tile.
+  // Prune entries whose objects are no longer matched to avoid leaking memory.
+  const freezeMatchedIds = [];
+  for (const { obj, actions } of matches) {
+    if (actions.some((a) => a.type === "freezeBox")) freezeMatchedIds.push(obj.id);
+  }
+  pruneFrozenBoxes(freezeMatchedIds);
+  for (const { obj, actions } of matches) {
+    for (const a of actions) {
+      if (a.type === "freezeBox") {
+        applyFreezeBox(ctx, { object: obj, action: a, intensity, captureCanvas, timeMs });
+      }
+    }
+  }
+
+  // 5b. Object-local edges + lines + depth.
   for (const { obj, actions } of matches) {
     const geom = geometries.get(obj.id);
     if (!geom) continue;
     for (const a of actions) {
-      if (a.type === "localEdges") applyLocalEdges(ctx, { geometry: geom, action: a, intensity, w });
+      if (a.type === "localDepth") applyLocalDepth(ctx, {
+        geometry: geom,
+        action: a,
+        intensity,
+        foregroundBackground: opts.foregroundBackground,
+      });
+      else if (a.type === "localEdges") applyLocalEdges(ctx, { geometry: geom, action: a, intensity, w });
       else if (a.type === "localLines") applyLocalLines(ctx, { geometry: geom, action: a, intensity, w });
     }
   }
 
-  // 5. Spotlight (background darken), aura (additive glow), glitch (overlay).
+  // 6. Spotlight (background darken), aura (additive glow), glitch (overlay).
   for (const { obj, actions } of matches) {
     for (const a of actions) {
       if (a.type === "spotlight") applySpotlight(ctx, { object: obj, action: a, intensity, w, h });
@@ -224,10 +278,10 @@ export function drawStyledPlan(ctx, captureCanvas, objects, geometries, plan, op
     }
   }
 
-  // 6. Labels.
+  // 7. Labels.
   drawLabels(ctx, matches, w);
 
-  // 7. Grain + vignette.
+  // 8. Grain + vignette.
   drawGrainAndVignette(ctx, gs, intensity);
 
   ctx.restore();
